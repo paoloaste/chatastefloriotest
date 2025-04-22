@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Aste Florio (WhatsApp)</title>
+  <style>
+    .chat-list li button {
+  display: none;
+}
+
+.chat-list li:hover button {
+  display: inline;
+}
+
+    body {
+      margin: 0;
+      display: flex;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    .sidebar {
+      width: 280px;
+      background: #fff;
+      border-right: 1px solid #ccc;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .sidebar h2 {
+      margin: 0;
+      padding: 12px;
+      background: #075e54;
+      color: white;
+    }
+    .chat-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .chat-list li {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+    }
+    .chat-list li:hover {
+      background: #f5f5f5;
+    }
+    .chat-list li.active {
+      background: #dcf8c6;
+    }
+    .badge {
+      background: #25d366;
+      color: white;
+      font-size: 0.7em;
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+    .chat-window {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: #e5ddd5;
+    }
+    .chat-header {
+      padding: 10px;
+      background: #075e54;
+      color: white;
+      font-weight: bold;
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+}
+    .message {
+      display: inline-block;
+      max-width: 60%;
+      margin: 6px 0;
+      padding: 8px 12px;
+      border-radius: 8px;
+      position: relative;
+      word-break: break-word;
+    }
+    .inbound {
+      background: #fff;
+      align-self: flex-start;
+    }
+    .outbound {
+      background: #dcf8c6;
+      align-self: flex-end;
+    }
+    .timestamp {
+      font-size: 0.7em;
+      text-align: right;
+      color: #555;
+      margin-top: 4px;
+    }
+    .chat-input {
+      display: flex;
+      padding: 10px;
+      border-top: 1px solid #ccc;
+      background: #fff;
+    }
+    .chat-input input {
+      flex: 1;
+      padding: 10px;
+      margin-right: 5px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    .chat-input button {
+      background: #075e54;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 5px;
+    }
+    .date-divider {
+      text-align: center;
+      font-size: 0.8em;
+      color: #555;
+      margin: 10px auto;
+    }
+  </style>
+</head>
+<body>
+<div class="sidebar">
+  <h2>Conversazioni</h2>
+  <ul class="chat-list" id="chatList"></ul>
+</div>
+<div class="chat-window">
+  <div class="chat-header" id="chatHeader">Nessuna chat selezionata</div>
+  <div class="chat-messages" id="chatMessages"></div>
+  <div class="chat-input">
+    <input type="text" id="msgInput" placeholder="Scrivi un messaggio..." onkeydown="handleKey(event)">
+    <button onclick="sendMessage()">Invia</button>
+  </div>
+</div>
+
+<script>
+let grouped = {}, unread = {}, readStatus = {}, selected = null;
+const dbUrl = 'https://aste-florio-default-rtdb.europe-west1.firebasedatabase.app';
+
+async function loadAll() {
+  const messages = await fetch(dbUrl + '/messages.json').then(r => r.json()) || {};
+  const status = await fetch(dbUrl + '/readStatus.json').then(r => r.json()) || {};
+  grouped = {}; unread = {}; readStatus = status;
+
+  for (let id in messages) {
+    const m = messages[id];
+    const isInbound = m.direction === 'inbound' || m.from === 'cliente';
+    const phone = isInbound
+      ? (m.from || '').replace('whatsapp:', '')
+      : (m.to || '').replace('whatsapp:', '');
+    if (!grouped[phone]) grouped[phone] = [];
+    grouped[phone].push({...m, id});
+    m.direction = m.direction || (m.from === "azienda" ? "outbound" : "inbound");
+  }
+
+  for (let phone in grouped) {
+    const lastRead = readStatus[phone] || 0;
+    unread[phone] = grouped[phone].filter(m => m.direction === 'inbound' && m.timestamp > lastRead).length;
+  }
+
+  renderSidebar();
+}
+
+function renderSidebar() {
+  const ul = document.getElementById('chatList');
+  ul.innerHTML = '';
+  Object.keys(grouped).sort((a, b) => {
+    const aT = grouped[a].at(-1).timestamp;
+    const bT = grouped[b].at(-1).timestamp;
+    return bT - aT;
+  }).forEach(num => {
+    const li = document.createElement('li');
+    li.innerHTML = `
+  <span>${num}</span>
+  ${unread[num] ? `<span class="badge">${unread[num]}</span>` : ''}
+  <button onclick="deleteChat('${num}')" style="background:none;border:none;color:red;font-size:16px;cursor:pointer;">✖️</button>
+`;
+
+li.onclick = (e) => {
+  if (e.target.tagName !== 'BUTTON') loadChat(num, li);
+};
+    ul.appendChild(li);
+  });
+}
+
+function formatDate(ts) {
+  return new Date(ts).toLocaleDateString('it-IT');
+}
+
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+}
+
+function loadChat(number, li) {
+  selected = number;
+  document.querySelectorAll('.chat-list li').forEach(l => l.classList.remove('active'));
+  li.classList.add('active');
+  document.getElementById('chatHeader').innerText = number;
+
+  // aggiorna stato lettura
+  fetch('/read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ number })
+  });
+
+  unread[number] = 0;
+  li.querySelector('.badge')?.remove();
+
+  const box = document.getElementById('chatMessages');
+  box.innerHTML = '';
+  const sorted = grouped[number].sort((a, b) => a.timestamp - b.timestamp);
+  let lastDate = '';
+
+  sorted.forEach(m => {
+    const d = formatDate(m.timestamp);
+    if (d !== lastDate) {
+      const divDate = document.createElement('div');
+      divDate.className = 'date-divider';
+      divDate.innerText = d;
+      box.appendChild(divDate);
+      lastDate = d;
+    }
+
+    const div = document.createElement('div');
+div.className = 'message ' + m.direction;
+
+let html = '';
+if (m.body) {
+  html += m.body.replace(/\\n/g, "<br>") + '<br>';
+} else if (m.text) {
+  html += m.text + '<br>';
+} else if (m.params && Array.isArray(m.params)) {
+  html += `[${m.template}] ` + m.params.join(" / ") + "<br>";
+}
+
+if (m.media && Array.isArray(m.media)) {
+  m.media.forEach(media => {
+    if (media.type.startsWith('image/')) {
+      html += `<img src="${media.url}" style="max-width: 200px; border-radius: 8px; margin-top: 5px;"><br>`;
+    } else {
+      const fileName = media.url.split('/').pop().split('?')[0];
+      html += `<a href="${media.url}" target="_blank">📎 ${fileName}</a><br>`;
+    }
+  });
+}
+
+div.innerHTML = html + `<div class="timestamp">${formatTime(m.timestamp)}</div>`;
+
+    box.appendChild(div);
+  });
+
+  box.scrollTop = box.scrollHeight;
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter') sendMessage();
+}
+
+function sendMessage() {
+  const input = document.getElementById('msgInput');
+  const body = input.value.trim();
+  if (!selected || !body) return;
+  fetch('/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ to: selected, body })
+  }).then(res => {
+    if (res.ok) {
+      input.value = '';
+      grouped[selected].push({
+        from: 'me',
+        to: selected,
+        direction: 'outbound',
+        timestamp: Date.now(),
+        body
+      });
+      loadChat(selected, document.querySelector('.chat-list li.active'));
+    }
+  });
+}
+
+loadAll();
+  function deleteChat(number) {
+  if (!confirm(`Sei sicuro di voler cancellare la chat con ${number}?`)) return;
+
+  fetch('/delete-chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ number })
+  })
+  .then(res => {
+    if (res.ok) {
+      alert('Chat cancellata con successo');
+      loadAll(); // ricarica la sidebar aggiornata
+    } else {
+      alert('Errore durante la cancellazione della chat');
+    }
+  });
+}
+</script>
+</body>
+</html>
